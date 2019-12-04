@@ -160,6 +160,7 @@ struct perf_task {
 #if HAVE_LIBAIO
 	struct iocb		iocb;
 #endif
+	FILE *lat_log;
 };
 
 struct worker_thread {
@@ -224,6 +225,7 @@ static bool g_no_shn_notification = false;
 static uint32_t g_keep_alive_timeout_in_ms = 10000;
 
 static const char *g_core_mask;
+static const char *g_lat_log_dir = NULL;
 
 struct trid_entry {
 	struct spdk_nvme_transport_id	trid;
@@ -931,6 +933,10 @@ task_complete(struct perf_task *task)
 		spdk_histogram_data_tally(ns_ctx->histogram, tsc_diff);
 	}
 
+	if (g_lat_log_dir) {
+		fprintf(task->lat_log, "%d,%lu\n", task->is_read, tsc_diff);
+	}
+
 	if (spdk_unlikely(entry->md_size > 0)) {
 		/* add application level verification for end-to-end data protection */
 		entry->fn_table->verify_io(task, entry);
@@ -971,10 +977,13 @@ check_io(struct ns_worker_ctx *ns_ctx)
 	ns_ctx->entry->fn_table->check_io(ns_ctx);
 }
 
+static int task_no = 0;
+
 static struct perf_task *
 allocate_task(struct ns_worker_ctx *ns_ctx, int queue_depth)
 {
 	struct perf_task *task;
+	char fn[256] = { 0 };
 
 	task = calloc(1, sizeof(*task));
 	if (task == NULL) {
@@ -985,6 +994,11 @@ allocate_task(struct ns_worker_ctx *ns_ctx, int queue_depth)
 	ns_ctx->entry->fn_table->setup_payload(task, queue_depth % 8 + 1);
 
 	task->ns_ctx = ns_ctx;
+
+	if (g_lat_log_dir) {
+		sprintf(fn, "%s/lat_log-%d.log", g_lat_log_dir, task_no++);
+		task->lat_log = fopen(fn, "w");
+	}
 
 	return task;
 }
@@ -1588,7 +1602,7 @@ parse_args(int argc, char **argv)
 	g_core_mask = NULL;
 	g_max_completions = 0;
 
-	while ((op = getopt(argc, argv, "c:e:i:lm:n:o:q:r:k:s:t:w:DGHILM:NT:U:V")) != -1) {
+	while ((op = getopt(argc, argv, "d:c:e:i:lm:n:o:q:r:k:s:t:w:DGHILM:NT:U:V")) != -1) {
 		switch (op) {
 		case 'i':
 		case 'm':
@@ -1638,6 +1652,9 @@ parse_args(int argc, char **argv)
 				g_nr_unused_io_queues = val;
 				break;
 			}
+			break;
+		case 'd':
+			g_lat_log_dir = optarg;
 			break;
 		case 'c':
 			g_core_mask = optarg;
